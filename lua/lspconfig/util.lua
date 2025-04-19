@@ -3,7 +3,7 @@ local api = vim.api
 local lsp = vim.lsp
 local nvim_eleven = vim.fn.has 'nvim-0.11' == 1
 
-local iswin = vim.loop.os_uname().version:match 'Windows'
+local iswin = vim.uv.os_uname().version:match 'Windows'
 
 local M = { path = {} }
 
@@ -32,30 +32,6 @@ function M.validate_bufnr(bufnr)
     validate('bufnr', bufnr, 'number')
   end
   return bufnr == 0 and api.nvim_get_current_buf() or bufnr
-end
-
-function M.add_hook_before(func, new_fn)
-  if func then
-    return function(...)
-      -- TODO which result?
-      new_fn(...)
-      return func(...)
-    end
-  else
-    return new_fn
-  end
-end
-
-function M.add_hook_after(func, new_fn)
-  if func then
-    return function(...)
-      -- TODO which result?
-      func(...)
-      return new_fn(...)
-    end
-  else
-    return new_fn
-  end
 end
 
 -- Maps lspconfig-style command options to nvim_create_user_command (i.e. |command-attributes|) option names.
@@ -127,7 +103,7 @@ function M.root_pattern(...)
     for _, pattern in ipairs(patterns) do
       local match = M.search_ancestors(startpath, function(path)
         for _, p in ipairs(vim.fn.glob(table.concat({ escape_wildcards(path), pattern }, '/'), true, true)) do
-          if vim.loop.fs_stat(p) then
+          if vim.uv.fs_stat(p) then
             return path
           end
         end
@@ -157,38 +133,6 @@ function M.insert_package_json(config_files, field, fname)
   return config_files
 end
 
-function M.get_active_clients_list_by_ft(filetype)
-  local clients = M.get_lsp_clients()
-  local clients_list = {}
-  for _, client in pairs(clients) do
-    --- @diagnostic disable-next-line:undefined-field
-    local filetypes = client.config.filetypes or {}
-    for _, ft in pairs(filetypes) do
-      if ft == filetype then
-        table.insert(clients_list, client.name)
-      end
-    end
-  end
-  return clients_list
-end
-
-function M.get_other_matching_providers(filetype)
-  local configs = require 'lspconfig.configs'
-  local active_clients_list = M.get_active_clients_list_by_ft(filetype)
-  local other_matching_configs = {}
-  for _, config in pairs(configs) do
-    if not vim.tbl_contains(active_clients_list, config.name) then
-      local filetypes = config.filetypes or {}
-      for _, ft in pairs(filetypes) do
-        if ft == filetype then
-          table.insert(other_matching_configs, config)
-        end
-      end
-    end
-  end
-  return other_matching_configs
-end
-
 function M.get_config_by_ft(filetype)
   local configs = require 'lspconfig.configs'
   local matching_configs = {}
@@ -203,15 +147,9 @@ function M.get_config_by_ft(filetype)
   return matching_configs
 end
 
-function M.get_active_client_by_name(bufnr, servername)
-  --TODO(glepnir): remove this for loop when we want only support 0.10+
-  for _, client in pairs(M.get_lsp_clients { bufnr = bufnr }) do
-    if client.name == servername then
-      return client
-    end
-  end
-end
-
+--- Note: In Nvim 0.11+ this currently has no public interface, the healthcheck uses the private
+--- `vim.lsp._enabled_configs`:
+--- https://github.com/neovim/neovim/blob/28e819018520a2300eaeeec6794ffcd614b25dd2/runtime/lua/vim/lsp/health.lua#L186
 function M.get_managed_clients()
   local configs = require 'lspconfig.configs'
   local clients = {}
@@ -256,7 +194,7 @@ end
 
 -- Traverse the path calling cb along the way.
 local function traverse_parents(path, cb)
-  path = vim.loop.fs_realpath(path)
+  path = vim.uv.fs_realpath(path)
   local dir = path
   -- Just in case our algo is buggy, don't infinite loop.
   for _ = 1, 100 do
@@ -296,12 +234,9 @@ function M.tbl_flatten(t)
   return nvim_eleven and vim.iter(t):flatten(math.huge):totable() or vim.tbl_flatten(t)
 end
 
-function M.get_lsp_clients(filter)
-  --- @diagnostic disable-next-line:deprecated
-  return nvim_eleven and lsp.get_clients(filter) or lsp.get_active_clients(filter)
-end
-
+---
 --- Deprecated functions
+---
 
 --- @deprecated use `vim.fn.isdirectory(path) == 1` instead
 --- @param filename string
@@ -310,11 +245,11 @@ function M.path.is_dir(filename)
   return vim.fn.isdirectory(filename) == 1
 end
 
---- @deprecated use `(vim.loop.fs_stat(path) or {}).type == 'file'` instead
+--- @deprecated use `(vim.uv.fs_stat(path) or {}).type == 'file'` instead
 --- @param path string
 --- @return boolean
 function M.path.is_file(path)
-  return (vim.loop.fs_stat(path) or {}).type == 'file'
+  return (vim.uv.fs_stat(path) or {}).type == 'file'
 end
 
 --- @deprecated use `vim.fs.dirname` instead
@@ -323,11 +258,11 @@ M.path.dirname = vim.fs.dirname
 --- @deprecated use `vim.fs.normalize` instead
 M.path.sanitize = vim.fs.normalize
 
---- @deprecated use `vim.loop.fs_stat` instead
+--- @deprecated use `vim.uv.fs_stat` instead
 --- @param filename string
 --- @return string|false
 function M.path.exists(filename)
-  local stat = vim.loop.fs_stat(filename)
+  local stat = vim.uv.fs_stat(filename)
   return stat and stat.type or false
 end
 
@@ -360,6 +295,77 @@ end
 --- @deprecated use `vim.fs.dirname(vim.fs.find('.git', { path = startpath, upward = true })[1])` instead
 function M.find_git_ancestor(startpath)
   return vim.fs.dirname(vim.fs.find('.git', { path = startpath, upward = true })[1])
+end
+
+--- @deprecated Will be removed. Do not use.
+function M.get_active_clients_list_by_ft(filetype)
+  local clients = vim.lsp.get_clients()
+  local clients_list = {}
+  for _, client in pairs(clients) do
+    --- @diagnostic disable-next-line:undefined-field
+    local filetypes = client.config.filetypes or {}
+    for _, ft in pairs(filetypes) do
+      if ft == filetype then
+        table.insert(clients_list, client.name)
+      end
+    end
+  end
+  return clients_list
+end
+
+--- @deprecated Will be removed. Do not use.
+function M.get_other_matching_providers(filetype)
+  local configs = require 'lspconfig.configs'
+  local active_clients_list = M.get_active_clients_list_by_ft(filetype)
+  local other_matching_configs = {}
+  for _, config in pairs(configs) do
+    if not vim.tbl_contains(active_clients_list, config.name) then
+      local filetypes = config.filetypes or {}
+      for _, ft in pairs(filetypes) do
+        if ft == filetype then
+          table.insert(other_matching_configs, config)
+        end
+      end
+    end
+  end
+  return other_matching_configs
+end
+
+--- @deprecated Use vim.lsp.get_clients instead.
+function M.get_lsp_clients(filter)
+  --- @diagnostic disable-next-line:deprecated
+  return nvim_eleven and lsp.get_clients(filter) or lsp.get_active_clients(filter)
+end
+
+--- @deprecated Will be removed. Do not use.
+function M.add_hook_before(func, new_fn)
+  if func then
+    return function(...)
+      -- TODO which result?
+      new_fn(...)
+      return func(...)
+    end
+  else
+    return new_fn
+  end
+end
+
+--- @deprecated Will be removed. Do not use.
+function M.add_hook_after(func, new_fn)
+  if func then
+    return function(...)
+      -- TODO which result?
+      func(...)
+      return new_fn(...)
+    end
+  else
+    return new_fn
+  end
+end
+
+--- @deprecated Will be removed. Do not use.
+function M.get_active_client_by_name(bufnr, servername)
+  return vim.lsp.get_clients({ bufnr = bufnr, name = servername })[1]
 end
 
 return M
